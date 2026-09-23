@@ -55,6 +55,21 @@ describe('FixedWindowLimiter', () => {
   });
 });
 
+describe('lazy sweeping', () => {
+  it.each(['fixed_window', 'sliding_window'] as const)('%s: sweeps expired keys on the first request after a window', (strategy) => {
+    const clock = new FakeClock();
+    const limiter = createRateLimiter(limit({ strategy }), clock);
+    limiter.tryAcquire('a');
+    limiter.tryAcquire('b');
+    clock.advance(9_999);
+    limiter.tryAcquire('c');
+    expect(limiter.size).toBe(3);
+    clock.advance(10_000);
+    limiter.tryAcquire('d');
+    expect(limiter.size).toBe(1);
+  });
+});
+
 describe('SlidingWindowLimiter', () => {
   it('limits over any rolling window, with no boundary burst', () => {
     const clock = new FakeClock(9_999);
@@ -103,10 +118,7 @@ describe('rate_limit middleware', () => {
 
   function middlewareFor(rateLimit: RateLimitConfig | undefined): Middleware | undefined {
     const route = { path: '/r', methods: ['GET'], stripPrefix: false, rateLimit } as RouteConfig;
-    const shutdown = new AbortController();
-    const middleware = rateLimitFeature.create(route, { clock: new FakeClock(), logger: silentLogger, shutdown: shutdown.signal });
-    shutdown.abort(); // stop the sweeper; the middleware itself keeps working
-    return middleware;
+    return rateLimitFeature.create(route, { clock: new FakeClock(), logger: silentLogger, shutdown: new AbortController().signal });
   }
 
   const request = (clientIp: string) => ({ clientIp }) as GatewayRequest;
@@ -136,14 +148,15 @@ describe('rate_limit middleware', () => {
     expect(err.headers).toMatchObject({ 'retry-after': '10', 'x-ratelimit-remaining': '0' });
   });
 
-  it('adds rate limit headers to gateway errors raised further in', async () => {
+  it('adds rate limit headers to gateway errors raised further in, keeping the original error', async () => {
     const middleware = middlewareFor(limit())!;
+    class BreakerOpen extends GatewayError {}
+    const original = new BreakerOpen(503, 'service_unavailable', {}, { connection: 'close' });
     const failing = async (): Promise<GatewayResponse> => {
-      throw new GatewayError(502, 'bad_gateway', {}, { connection: 'close' });
+      throw original;
     };
     const err = await rejection(middleware(request('1.1.1.1'), failing));
-    expect(err.status).toBe(502);
-    expect(err.code).toBe('bad_gateway');
+    expect(err).toBe(original);
     expect(err.headers).toEqual({ connection: 'close', 'x-ratelimit-limit': '3', 'x-ratelimit-remaining': '2' });
   });
 

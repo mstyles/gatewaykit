@@ -105,13 +105,37 @@ export class SlidingWindowLimiter implements RateLimiter {
 }
 
 export function createRateLimiter(config: RateLimitConfig, clock: Clock): RateLimiter {
-  return config.strategy === 'sliding_window'
-    ? new SlidingWindowLimiter(config, clock)
-    : new FixedWindowLimiter(config, clock);
+  const limiter =
+    config.strategy === 'sliding_window'
+      ? new SlidingWindowLimiter(config, clock)
+      : new FixedWindowLimiter(config, clock);
+  return sweepingLazily(limiter, config.windowMs, clock);
+}
+
+/**
+ * Sweeps at most once per window, on the request path. There is no timer to stop on shutdown
+ * (or to overflow on very long windows), and sweeps follow the injected clock. An idle gateway
+ * keeps its stale buckets until the next request, which is harmless.
+ */
+function sweepingLazily(limiter: RateLimiter, windowMs: number, clock: Clock): RateLimiter {
+  let lastSweep = clock.now();
+  return {
+    tryAcquire(key) {
+      const now = clock.now();
+      if (now - lastSweep >= windowMs) {
+        limiter.sweep();
+        lastSweep = now;
+      }
+      return limiter.tryAcquire(key);
+    },
+    sweep: () => limiter.sweep(),
+    get size() {
+      return limiter.size;
+    },
+  };
 }
 
 const GLOBAL_KEY = '*';
-const MIN_SWEEP_INTERVAL_MS = 1_000;
 
 /**
  * Applies the route's effective rate limit (its own, else the global default). Each route
@@ -120,14 +144,11 @@ const MIN_SWEEP_INTERVAL_MS = 1_000;
  */
 export const rateLimitFeature: Feature = {
   name: 'rate_limit',
-  create(route, { clock, shutdown }) {
+  create(route, { clock }) {
     const config = route.rateLimit;
     if (!config) return undefined;
 
     const limiter = createRateLimiter(config, clock);
-    const sweeper = setInterval(() => limiter.sweep(), Math.max(config.windowMs, MIN_SWEEP_INTERVAL_MS));
-    sweeper.unref();
-    shutdown.addEventListener('abort', () => clearInterval(sweeper), { once: true });
 
     return async (req, next) => {
       const decision = limiter.tryAcquire(config.per === 'global' ? GLOBAL_KEY : req.clientIp);
@@ -147,9 +168,8 @@ export const rateLimitFeature: Feature = {
         response = await next(req);
       } catch (err) {
         // Gateway-generated failures further in (502/504, an open breaker) still used budget.
-        if (err instanceof GatewayError) {
-          throw new GatewayError(err.status, err.code, err.body, { ...err.headers, ...headers });
-        }
+        // Added in place so the error keeps its class, stack and cause.
+        if (err instanceof GatewayError) Object.assign(err.headers, headers);
         throw err;
       }
       return { ...response, headers: { ...response.headers, ...headers } };
