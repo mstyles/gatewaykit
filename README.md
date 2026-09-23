@@ -55,7 +55,7 @@ npm run typecheck
 - [x] Routing: segment-aware longest-prefix match, 404, 405 with `Allow`
 - [x] `strip_prefix`
 - [x] Proxying with per-route `upstream.timeout` (504) and connection failures (502)
-- [ ] `rate_limit` / `global_rate_limit` (`fixed_window`, `sliding_window`, `per: ip|global`)
+- [x] `rate_limit` / `global_rate_limit` (`fixed_window`, `sliding_window`, `per: ip|global`), with 429 + `Retry-After` and `X-RateLimit-*` headers
 - [x] `auth` (`api_key`), with a per-IP limit on failed attempts
 - [ ] `retry` (`fixed`, `exponential`)
 - [ ] `circuit_breaker`

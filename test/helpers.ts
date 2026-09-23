@@ -99,3 +99,15 @@ function parseRawResponse(data: string): RawResponse {
   }
   return { status: status ? Number(status[1]) : null, headers, body: rest.join('\r\n\r\n') };
 }
+
+/** Manually advanced clock for time-based features. */
+export class FakeClock {
+  constructor(public time = 0) {}
+  now = () => this.time;
+  sleep = async (ms: number) => {
+    this.time += ms;
+  };
+  advance(ms: number): void {
+    this.time += ms;
+  }
+}
