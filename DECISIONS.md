@@ -148,8 +148,40 @@ sleeping.
     rotate source addresses to get a fresh bucket per request. Fix: key IPv6 clients by their /64
     prefix.
 
+## Retry
+
+- **`attempts` is the total**, including the first try: `attempts: 3` is one call plus two
+  retries. (Config validation caps it at 10.)
+- **What gets retried**: an upstream response whose status is in `on`, or a timeout (504) or
+  connection failure (502) the gateway raised itself, if that status is in `on`. A client
+  abort (499), a gateway rejection, or an unexpected error is never retried.
+- **Non-idempotent methods are retried.** The example config retries a route that allows
+  POST, so I honor the config rather than silently narrowing it. The risk: a POST that timed
+  out may have been applied upstream, and the retry applies it again. With more time I'd
+  retry only idempotent methods by default, and POST only when the client sends an
+  `Idempotency-Key` (forwarded so the upstream can dedupe).
+- **Backoff**: `fixed` waits `initial_delay` before each retry. `exponential` waits
+  `initial_delay × 2^(n−1)` with ±20% jitter, so clients that failed together don't come
+  back in lockstep and hammer a recovering upstream.
+- **The last outcome is returned unchanged**, so after exhausted retries the client sees
+  the real upstream status (e.g. 503 with its body), not a gateway-invented one.
+- **Each attempt picks a target again**, so with load balancing a retry can land on a
+  healthy target.
+- **Client aborts** stop the loop: mid-attempt (the upstream call throws 499, which isn't
+  retried) and mid-backoff (`Clock.sleep` takes the request's signal).
+- **Every retry is logged** (`warn`, with route, attempt, status and delay), since retries
+  hide upstream trouble from clients.
+- **Known gaps**:
+  - No overall deadline: each attempt gets the full route timeout, so the example `/api/orders`
+    route can take 3 × 5s + 1s + 2s ≈ 18s before answering. Fix: a per-request budget that
+    caps the remaining attempts and backoff.
+  - Exponential delay has no cap; with 10 attempts and a large `initial_delay` the last wait
+    is 256× the initial one. Fix: a max delay (not in the schema, so it would be a constant).
+  - An upstream `Retry-After` header is ignored.
+  - No retry budget: during an outage every client request multiplies upstream load by up to
+    `attempts`. The circuit breaker (next) is the mitigation.
+
 <!-- Still to decide as features land:
-  - retry `attempts`: total attempts or retries after the first? Retry non-idempotent POST?
   - circuit breaker: what counts as a failure; half-open behaviour
   - health checks: recovery rule (no healthy_threshold in the schema); all targets unhealthy → 503
   - transforms: $request_time format; unmapped body fields; non-JSON bodies

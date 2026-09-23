@@ -104,7 +104,11 @@ function parseRawResponse(data: string): RawResponse {
 export class FakeClock {
   constructor(public time = 0) {}
   now = () => this.time;
-  sleep = async (ms: number) => {
+  /** Every sleep requested, in order. */
+  readonly sleeps: number[] = [];
+  sleep = async (ms: number, signal?: AbortSignal) => {
+    if (signal?.aborted) throw signal.reason;
+    this.sleeps.push(ms);
     this.time += ms;
   };
   advance(ms: number): void {
