@@ -19,6 +19,11 @@ export interface GatewayRequest {
   clientIp: string;
   receivedAt: Date;
   route: RouteConfig;
+  /**
+   * Aborted when the client goes away before the response is written. Anything slow on the
+   * request path (upstream calls, retry backoff) should stop when it fires.
+   */
+  signal: AbortSignal;
 }
 
 export interface GatewayResponse {

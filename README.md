@@ -56,7 +56,7 @@ npm run typecheck
 - [x] `strip_prefix`
 - [x] Proxying with per-route `upstream.timeout` (504) and connection failures (502)
 - [ ] `rate_limit` / `global_rate_limit` (`fixed_window`, `sliding_window`, `per: ip|global`)
-- [ ] `auth` (`api_key`)
+- [x] `auth` (`api_key`), with a per-IP limit on failed attempts
 - [ ] `retry` (`fixed`, `exponential`)
 - [ ] `circuit_breaker`
 - [ ] `upstream.targets` load balancing (`round_robin`, `weighted_round_robin`); currently uses the first target

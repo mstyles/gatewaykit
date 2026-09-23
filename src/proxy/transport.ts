@@ -34,6 +34,8 @@ export function stripHopByHop(headers: Record<string, string | string[] | undefi
  * Sends one request to one upstream target and buffers the response. Upstream HTTP errors
  * (4xx/5xx) are returned as responses. Timeouts (504) and connection failures (502) are
  * thrown so retry and circuit-breaker middleware can tell them apart from real responses.
+ * If the client goes away (`req.signal`), the upstream request is cancelled and a
+ * `client_closed_request` error is thrown; retry and the breaker must not count it.
  */
 export async function forward(req: GatewayRequest, target: UpstreamTarget, timeoutMs: number): Promise<GatewayResponse> {
   const url = upstreamUrl(target.url, req.path, req.query);
@@ -46,12 +48,13 @@ export async function forward(req: GatewayRequest, target: UpstreamTarget, timeo
   };
   if (typeof req.headers.host === 'string') headers['x-forwarded-host'] = req.headers.host;
 
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const timeout = new AbortController();
+  const timer = setTimeout(() => timeout.abort(), timeoutMs);
   try {
-    return await send(url, req.method, headers, req.body, controller.signal);
+    return await send(url, req.method, headers, req.body, AbortSignal.any([timeout.signal, req.signal]));
   } catch (err) {
-    if (controller.signal.aborted) {
+    if (req.signal.aborted) throw new GatewayError(499, 'client_closed_request');
+    if (timeout.signal.aborted) {
       throw new GatewayError(504, 'gateway_timeout', { message: `upstream did not respond within ${timeoutMs}ms` });
     }
     throw new GatewayError(502, 'bad_gateway', {

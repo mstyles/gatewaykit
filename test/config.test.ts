@@ -54,7 +54,7 @@ routes:
     expect(config.globalRateLimit).toBeUndefined();
     const [route] = config.routes;
     expect(route.path).toBe('/svc');
-    expect(route.methods).toEqual(['GET']);
+    expect(route.methods).toEqual(['GET', 'HEAD']);
     expect(route.stripPrefix).toBe(false);
     expect(route.rateLimit).toBeUndefined();
     expect(route.upstream).toMatchObject({ balance: 'round_robin', timeoutMs: 30_000 });
