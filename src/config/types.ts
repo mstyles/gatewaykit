@@ -19,7 +19,7 @@ export interface GatewayConfig {
 export interface RouteConfig {
   /** Normalized prefix: leading slash, no trailing slash (except "/"). */
   path: string;
-  /** Uppercased, deduplicated. */
+  /** Uppercased, deduplicated; HEAD is added whenever GET is present. */
   methods: string[];
   stripPrefix: boolean;
   upstream: UpstreamConfig;

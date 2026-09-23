@@ -299,6 +299,8 @@ function readMethods(r: Reader): string[] {
   for (const method of methods) {
     if (!(HTTP_METHODS as readonly string[]).includes(method)) r.error(`unsupported HTTP method "${method}"`, 'methods');
   }
+  // HEAD is GET without the body (RFC 9110 §9.3.2), so a route that serves GET serves HEAD too.
+  if (methods.includes('GET') && !methods.includes('HEAD')) methods.push('HEAD');
   return methods;
 }
 
