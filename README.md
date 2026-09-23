@@ -58,7 +58,7 @@ npm run typecheck
 - [x] `rate_limit` / `global_rate_limit` (`fixed_window`, `sliding_window`, `per: ip|global`), with 429 + `Retry-After` and `X-RateLimit-*` headers
 - [x] `auth` (`api_key`), with a per-IP limit on failed attempts
 - [x] `retry` (`fixed`, `exponential` with jitter), retrying listed statuses plus timeouts/connection failures; stops when the client hangs up
-- [ ] `circuit_breaker`
+- [x] `circuit_breaker` (closed/open/half-open per route), counting upstream 5xx, timeouts and connection failures after retries; 503 + `Retry-After` while open
 - [ ] `upstream.targets` load balancing (`round_robin`, `weighted_round_robin`); currently uses the first target
 - [ ] `health_check`
 - [ ] `request_transform` / `response_transform` (headers)

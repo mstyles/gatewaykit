@@ -66,7 +66,7 @@ sleeping.
   to the upstream and `X-Forwarded-Host`/`-Proto` are added.
 - **Errors** are JSON `{ "error": "<code>", ... }`: 400 `bad_request`, 401 `unauthorized`,
   404 `not_found`, 405 `method_not_allowed`, 413 `payload_too_large`, 429 `too_many_requests`,
-  502 `bad_gateway`, 504 `gateway_timeout`.
+  502 `bad_gateway`, 503 `service_unavailable`, 504 `gateway_timeout`.
 - **Body limit**: a `Content-Length` over 10 MB is rejected with 413 before any of the body is
   read. Bodies without a declared length (chunked) are rejected as soon as they pass the limit.
 - **Client aborts**: if the client hangs up while its body is being read or while the upstream is
@@ -181,8 +181,36 @@ sleeping.
   - No retry budget: during an outage every client request multiplies upstream load by up to
     `attempts`. The circuit breaker (next) is the mitigation.
 
+## Circuit breaker
+
+- **What counts as a failure**: an upstream response with status ≥ 500, or a timeout (504) or
+  connection failure (502) the gateway raised itself. Both, because an upstream answering 500s
+  is as unhealthy as one that doesn't answer. A 4xx is a success (the upstream is up and
+  answering), and a client abort (499), a gateway rejection or an unexpected error doesn't count
+  either way. Measured after retries (see pipeline order above).
+- **Window**: closed-state failures are a sliding log of timestamps within `window`; the breaker
+  opens when the count reaches `threshold`. The log is pruned on every failure and cleared on
+  opening, so it never holds more than `threshold` entries. Successes don't reset the count.
+- **Open**: 503 `{ "error": "service_unavailable", "retry_after": <s> }` with `Retry-After`
+  (seconds left in the cooldown, rounded up, at least 1), without calling the upstream.
+- **Half-open**: the first request after the cooldown is the single probe; concurrent requests
+  get 503 with `retry_after: 1` until it settles. Probe success closes the breaker and resets the
+  count; probe failure reopens it with a fresh cooldown. A probe that ends neutral (client abort)
+  frees the slot and leaves the breaker half-open, so the next request probes.
+- **Late results are ignored**: a request admitted while closed that fails after the breaker
+  opened doesn't extend the cooldown or decide the probe.
+- **Transitions are logged**: `warn` on opening, `info` on half-open and closing, with the route.
+- **State is per route, per process**: in memory, like rate limits. Several gateway instances
+  each trip independently.
+- **Known gaps**:
+  - One breaker per route, not per target: with load balancing, one bad target can open the
+    breaker for the healthy ones. Health checks are the per-target mitigation.
+  - The threshold is a count, not a failure rate, so a busy route trips on a small fraction of
+    errors and a quiet one needs the same absolute count. Fix: a minimum request volume plus a
+    failure percentage (not in the schema).
+  - A single probe decides recovery; a flaky upstream can flap between open and closed.
+
 <!-- Still to decide as features land:
-  - circuit breaker: what counts as a failure; half-open behaviour
   - health checks: recovery rule (no healthy_threshold in the schema); all targets unhealthy → 503
   - transforms: $request_time format; unmapped body fields; non-JSON bodies
 -->
