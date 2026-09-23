@@ -210,8 +210,38 @@ sleeping.
     failure percentage (not in the schema).
   - A single probe decides recovery; a flaky upstream can flap between open and closed.
 
+## Health checks
+
+- **Active probes only**: every `interval`, each target of a route with `health_check` gets
+  `GET <target><path>` (joined onto a base path, like proxied requests). A non-2xx status, a
+  connection error or no answer in time is a failure; the body is drained and ignored.
+- **`unhealthy_threshold` consecutive failures** mark a target unhealthy. Targets start
+  healthy, so a gateway with health checks behaves like one without until evidence arrives.
+- **One success marks a target healthy again** and resets the count. The schema has no
+  `healthy_threshold`, and a symmetric default would keep a recovered target out of rotation
+  for another `threshold × interval`. The cost is flapping: a target failing most probes
+  rejoins the rotation on every lucky pass. With more time I'd add `healthy_threshold`.
+- **Probe timeout = min(interval, route timeout)**: a probe never overlaps the next round,
+  and a target too slow to answer a real request in time isn't reported healthy.
+- **All of a route's targets are probed concurrently**, so one hanging target can't delay
+  the others' checks. The first round runs at startup rather than after one interval.
+- **Transitions are logged, individual failures aren't**: `warn` when a target goes
+  unhealthy (with the last failure's reason), `info` when it recovers. A probe every few
+  seconds per target would otherwise flood the logs.
+- **Shutdown**: the loop sleeps on `deps.shutdown`, and the same signal cancels probes in
+  flight, so `gateway.close()` stops it immediately. A probe cut off by shutdown isn't
+  counted.
+- **State is in-process, per route, keyed by target URL**: two routes sharing a target probe
+  it separately, and each gateway instance forms its own view. Fine for one process; a fleet would want
+  shared or gossiped health.
+- **Known gaps**:
+  - No passive health checking: real request failures (502/504) don't mark a target
+    unhealthy between probes. The circuit breaker covers part of this per route.
+  - A target that fails its first probes is still used until the threshold is reached, up to
+    `threshold × interval` after startup (90s with the example config).
+  - No jitter on the interval, so all routes probe in lockstep after startup.
+
 <!-- Still to decide as features land:
-  - health checks: recovery rule (no healthy_threshold in the schema); all targets unhealthy → 503
   - transforms: $request_time format; unmapped body fields; non-JSON bodies
 -->
 

@@ -67,7 +67,7 @@ export async function forward(req: GatewayRequest, target: UpstreamTarget, timeo
 }
 
 /** Joins the target's base path (if any) with the request path. */
-function upstreamUrl(base: URL, path: string, query: string): URL {
+export function upstreamUrl(base: URL, path: string, query = ''): URL {
   const url = new URL(base);
   url.pathname = base.pathname.replace(/\/+$/, '') + path;
   url.search = query;
