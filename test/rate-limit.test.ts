@@ -136,6 +136,17 @@ describe('rate_limit middleware', () => {
     expect(err.headers).toMatchObject({ 'retry-after': '10', 'x-ratelimit-remaining': '0' });
   });
 
+  it('adds rate limit headers to gateway errors raised further in', async () => {
+    const middleware = middlewareFor(limit())!;
+    const failing = async (): Promise<GatewayResponse> => {
+      throw new GatewayError(502, 'bad_gateway', {}, { connection: 'close' });
+    };
+    const err = await rejection(middleware(request('1.1.1.1'), failing));
+    expect(err.status).toBe(502);
+    expect(err.code).toBe('bad_gateway');
+    expect(err.headers).toEqual({ connection: 'close', 'x-ratelimit-limit': '3', 'x-ratelimit-remaining': '2' });
+  });
+
   it('keys by client IP when per: ip', async () => {
     const middleware = middlewareFor(limit({ requests: 1, per: 'ip' }))!;
     await middleware(request('1.1.1.1'), next);

@@ -1,7 +1,7 @@
 import type { Clock } from '../clock.js';
 import type { RateLimitConfig } from '../config/types.js';
 import { GatewayError } from '../errors.js';
-import type { Feature } from '../pipeline/types.js';
+import type { Feature, GatewayResponse } from '../pipeline/types.js';
 
 export interface RateLimitDecision {
   allowed: boolean;
@@ -142,7 +142,16 @@ export const rateLimitFeature: Feature = {
           'retry-after': String(retryAfter),
         });
       }
-      const response = await next(req);
+      let response: GatewayResponse;
+      try {
+        response = await next(req);
+      } catch (err) {
+        // Gateway-generated failures further in (502/504, an open breaker) still used budget.
+        if (err instanceof GatewayError) {
+          throw new GatewayError(err.status, err.code, err.body, { ...err.headers, ...headers });
+        }
+        throw err;
+      }
       return { ...response, headers: { ...response.headers, ...headers } };
     };
   },
