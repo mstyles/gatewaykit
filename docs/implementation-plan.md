@@ -154,6 +154,6 @@ The biggest risk is time: seven phases are unlikely to fit in the 2-hour budget,
 **Open questions (make a call and document it)**
 
 - [x] Retry non-idempotent methods? The example config retries a route that allows POST. Decided: honor the config and retry every method the route allows, POST included. Duplicate-write risk is documented in DECISIONS.md; idempotency keys are a "next" item.
-- [ ] All targets unhealthy: fail open (proposed) or return 503?
+- [x] All targets unhealthy: fail open (proposed) or return 503? Decided: fail open. The selector picks among all targets as if healthy and logs a warning once on entering that state; see DECISIONS.md.
 - [ ] Should the circuit breaker count 5xx responses, or only transport failures (502/504 thrown)? Proposed: both.
 - [ ] `$request_time` format: ISO 8601 (proposed) or Unix milliseconds?

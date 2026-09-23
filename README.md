@@ -59,7 +59,7 @@ npm run typecheck
 - [x] `auth` (`api_key`), with a per-IP limit on failed attempts
 - [x] `retry` (`fixed`, `exponential` with jitter), retrying listed statuses plus timeouts/connection failures; stops when the client hangs up
 - [ ] `circuit_breaker`
-- [ ] `upstream.targets` load balancing (`round_robin`, `weighted_round_robin`); currently uses the first target
+- [x] `upstream.targets` load balancing (`round_robin`, `weighted_round_robin`), skipping unhealthy targets and failing open when all are down
 - [ ] `health_check`
 - [ ] `request_transform` / `response_transform` (headers)
 - [ ] `request_transform.body.mapping` / `response_transform.body.envelope`
