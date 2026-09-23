@@ -215,10 +215,32 @@ sleeping.
   - transforms: $request_time format; unmapped body fields; non-JSON bodies
 -->
 
-## Partially implemented
+## Load balancing
 
-- **Load balancing**: `upstream.targets` is parsed and validated, but every request goes to the
-  first target (`src/upstream/selector.ts`).
+- **One algorithm: nginx's smooth weighted round robin.** Each pick adds every candidate's
+  weight to its running score, takes the highest, and subtracts the candidates' total weight
+  from the winner. Weights 3:1 give A A B A, not A A A B, so a heavy target never takes a
+  burst while a light one idles. `round_robin` is the same code with every weight set to 1,
+  which reduces to plain rotation; one code path means health skipping behaves the same for
+  both. Exact over a cycle: 3:1 over 400 picks is 300/100 (tested).
+- **State is per route, per process**: `buildRouteHandler` creates one selector per route, so
+  two routes sharing a target rotate independently, and multiple gateway processes don't
+  coordinate. For round robin that only costs perfect evenness, not correctness.
+- **Unhealthy targets sit out** (`TargetHealth.isHealthy`, supplied by the health monitor).
+  Their score is frozen while they're out, so on recovery they rejoin the rotation without a
+  catch-up burst.
+- **All targets unhealthy → fail open**: pick among all targets as if healthy, and log a
+  `warn` once on entering that state (and an `info` on leaving it), not per request. Health
+  checks can be wrong (a broken `/healthz`, a network blip between gateway and upstream), and
+  trying a target is never worse than a guaranteed 503. Trade-off: during a real outage clients
+  wait for the route timeout (504) or a connection error (502) instead of a fast 503; the
+  circuit breaker is what turns that into fast failures.
+- **Known gaps**:
+  - No least-connections or latency awareness: a slow target gets its full share.
+  - A retry can pick the target that just failed (e.g. with one healthy target, or when
+    rotation lands on it again). Fix: pass the failed target to `pick` as a hint to avoid.
+  - Passive health (marking a target down after proxied requests fail) isn't done; only the
+    active health check feeds `TargetHealth`.
 
 ## What I'd build next
 
