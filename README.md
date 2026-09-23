@@ -63,8 +63,10 @@ npm run typecheck
 - [x] `circuit_breaker` (closed/open/half-open per route), counting upstream 5xx, timeouts and connection failures after retries; 503 + `Retry-After` while open
 - [x] `upstream.targets` load balancing (`round_robin`, `weighted_round_robin`), skipping unhealthy targets and failing open when all are down
 - [x] `health_check`: concurrent `GET` probes every `interval`; `unhealthy_threshold` consecutive failures (non-2xx, error or timeout) mark a target unhealthy, one success restores it
-- [ ] `request_transform` / `response_transform` (headers)
-- [ ] `request_transform.body.mapping` / `response_transform.body.envelope`
+- [ ] `request_transform` / `response_transform` (headers): parsed and validated, not applied yet
+- [ ] `request_transform.body.mapping` / `response_transform.body.envelope`: parsed and validated, not applied yet
+
+Why transforms were cut, and what I'd build next: see [`DECISIONS.md`](DECISIONS.md).
 
 ## Layout
 

@@ -2,15 +2,23 @@
 
 ## Prioritization
 
-<!-- Fill in as you go: what you built in which order, and why. Draft plan below. -->
+Built in this order, one branch and merge per feature so the history reads as a sequence of
+working gateways:
 
-1. **Foundation**: config loading/validation, `/health`, routing, proxying, timeouts, 404/405/502/504.
-   The hard requirements, plus the "malformed config" and "upstream down" failure modes.
-2. Rate limiting: explicitly called out ("50 requests hit a rate-limited route simultaneously").
-3. API-key auth: small, high value.
-4. Retry and circuit breaker: resilience.
-5. Load balancing and health checks.
-6. Header transforms, then body transforms (the most ambiguity and code for the least value).
+1. **Foundation**: config loading/validation, `/health`, routing, proxying, timeouts,
+   404/405/502/504. The hard requirements, plus the "malformed config" and "upstream down"
+   failure modes.
+2. **API-key auth**, alongside hardening the request path (path normalization, body limits,
+   client aborts, shutdown). Small, and a gateway that proxies `/api/internal` unauthenticated
+   is worse than one missing a feature.
+3. **Rate limiting**: the brief calls it out ("50 requests hit a rate-limited route
+   simultaneously").
+4. **Retry, then circuit breaker, load balancing and health checks**: the resilience features,
+   which score on production thinking. Retry went first because the breaker's placement
+   (outside retry) depends on it.
+5. **Not built: request/response transforms** (headers and bodies). They carry the most
+   ambiguity (dynamic values, dot-path mapping, envelopes) for the least resilience value, so
+   they were the planned cut. See "Not implemented" below.
 
 ## Architecture
 
@@ -72,9 +80,9 @@ sleeping.
 - **Client aborts**: if the client hangs up while its body is being read or while the upstream is
   answering, nothing is written and the request is logged with status 499 (the nginx convention),
   not as a 500 or an error. The in-flight upstream request is cancelled too
-  (`GatewayRequest.signal`), so a client that gives up doesn't hold an upstream connection. When
-  retry and the circuit breaker land, they must stop on that signal (no further attempts or
-  backoff sleeps) and must not count a `client_closed_request` as an upstream failure.
+  (`GatewayRequest.signal`), so a client that gives up doesn't hold an upstream connection.
+  Retry stops on that signal (no further attempts or backoff sleeps), and neither retry nor the
+  circuit breaker counts a `client_closed_request` as an upstream failure.
 - **Shutdown**: on SIGINT/SIGTERM the gateway stops accepting connections, lets in-flight
   requests finish (responding with `Connection: close`), and force-closes anything still open
   after 10s.
@@ -179,7 +187,7 @@ sleeping.
     is 256× the initial one. Fix: a max delay (not in the schema, so it would be a constant).
   - An upstream `Retry-After` header is ignored.
   - No retry budget: during an outage every client request multiplies upstream load by up to
-    `attempts`. The circuit breaker (next) is the mitigation.
+    `attempts`. The circuit breaker is the mitigation.
 
 ## Circuit breaker
 
@@ -209,6 +217,33 @@ sleeping.
     errors and a quiet one needs the same absolute count. Fix: a minimum request volume plus a
     failure percentage (not in the schema).
   - A single probe decides recovery; a flaky upstream can flap between open and closed.
+
+## Load balancing
+
+- **One algorithm: nginx's smooth weighted round robin.** Each pick adds every candidate's
+  weight to its running score, takes the highest, and subtracts the candidates' total weight
+  from the winner. Weights 3:1 give A A B A, not A A A B, so a heavy target never takes a
+  burst while a light one idles. `round_robin` is the same code with every weight set to 1,
+  which reduces to plain rotation; one code path means health skipping behaves the same for
+  both. Exact over a cycle: 3:1 over 400 picks is 300/100 (tested).
+- **State is per route, per process**: `buildRouteHandler` creates one selector per route, so
+  two routes sharing a target rotate independently, and multiple gateway processes don't
+  coordinate. For round robin that only costs perfect evenness, not correctness.
+- **Unhealthy targets sit out** (`TargetHealth.isHealthy`, supplied by the health monitor).
+  Their score is frozen while they're out, so on recovery they rejoin the rotation without a
+  catch-up burst.
+- **All targets unhealthy → fail open**: pick among all targets as if healthy, and log a
+  `warn` once on entering that state (and an `info` on leaving it), not per request. Health
+  checks can be wrong (a broken `/healthz`, a network blip between gateway and upstream), and
+  trying a target is never worse than a guaranteed 503. Trade-off: during a real outage clients
+  wait for the route timeout (504) or a connection error (502) instead of a fast 503; the
+  circuit breaker is what turns that into fast failures.
+- **Known gaps**:
+  - No least-connections or latency awareness: a slow target gets its full share.
+  - A retry can pick the target that just failed (e.g. with one healthy target, or when
+    rotation lands on it again). Fix: pass the failed target to `pick` as a hint to avoid.
+  - Passive health (marking a target down after proxied requests fail) isn't done; only the
+    active health check feeds `TargetHealth`.
 
 ## Health checks
 
@@ -241,42 +276,60 @@ sleeping.
     `threshold × interval` after startup (90s with the example config).
   - No jitter on the interval, so all routes probe in lockstep after startup.
 
-<!-- Still to decide as features land:
-  - transforms: $request_time format; unmapped body fields; non-JSON bodies
--->
+## Not implemented
 
-## Load balancing
-
-- **One algorithm: nginx's smooth weighted round robin.** Each pick adds every candidate's
-  weight to its running score, takes the highest, and subtracts the candidates' total weight
-  from the winner. Weights 3:1 give A A B A, not A A A B, so a heavy target never takes a
-  burst while a light one idles. `round_robin` is the same code with every weight set to 1,
-  which reduces to plain rotation; one code path means health skipping behaves the same for
-  both. Exact over a cycle: 3:1 over 400 picks is 300/100 (tested).
-- **State is per route, per process**: `buildRouteHandler` creates one selector per route, so
-  two routes sharing a target rotate independently, and multiple gateway processes don't
-  coordinate. For round robin that only costs perfect evenness, not correctness.
-- **Unhealthy targets sit out** (`TargetHealth.isHealthy`, supplied by the health monitor).
-  Their score is frozen while they're out, so on recovery they rejoin the rotation without a
-  catch-up burst.
-- **All targets unhealthy → fail open**: pick among all targets as if healthy, and log a
-  `warn` once on entering that state (and an `info` on leaving it), not per request. Health
-  checks can be wrong (a broken `/healthz`, a network blip between gateway and upstream), and
-  trying a target is never worse than a guaranteed 503. Trade-off: during a real outage clients
-  wait for the route timeout (504) or a connection error (502) instead of a fast 503; the
-  circuit breaker is what turns that into fast failures.
-- **Known gaps**:
-  - No least-connections or latency awareness: a slow target gets its full share.
-  - A retry can pick the target that just failed (e.g. with one healthy target, or when
-    rotation lands on it again). Fix: pass the failed target to `pick` as a hint to avoid.
-  - Passive health (marking a target down after proxied requests fail) isn't done; only the
-    active health check feeds `TargetHealth`.
+- **`request_transform` / `response_transform`**: parsed and validated at startup, but ignored
+  at runtime, so a route that configures them is proxied untransformed. That matters most for
+  `headers.remove`: on the example `/api/legacy` route, `X-Internal` still reaches the upstream
+  and `Server` still reaches the client. The design is in `docs/implementation-plan.md`
+  (phases 6–7): headers first (remove, then add), then JSON body mapping and the response
+  envelope, with dynamic values resolved in one place and unknown `$names` rejected at startup.
 
 ## What I'd build next
 
-<!-- Fill in at the end. -->
+In priority order:
+
+1. **Header transforms**, then body transforms (above). Until then, a startup warning when a
+   route configures a transform, so the gap isn't silent.
+2. **A per-request deadline** shared by retries and backoff, plus a cap on exponential delay.
+   Today `/api/orders` can take ~18s to answer with a 5s route timeout.
+3. **Safer retries**: retry POST only with an `Idempotency-Key`, honor an upstream
+   `Retry-After`, and add a retry budget so an outage doesn't multiply upstream load.
+4. **Per-target resilience**: passive health checks (proxied 502/504s count against the target
+   that served them), a circuit breaker per target rather than per route, and avoiding the
+   just-failed target on retry.
+5. **Check auth and rate limits before reading the body**, so a rejected client can't make the
+   gateway buffer 10 MB.
+6. **Metrics**: request counts and latencies per route and status, breaker state, target
+   health, rate-limit rejections. Logs record transitions today, but there's nothing to graph
+   or alert on.
+7. **Shared state for multiple instances**: rate limits and breakers behind their existing
+   interfaces, backed by Redis (atomic scripts for check-and-consume).
+8. Smaller items: IPv6 clients keyed by /64 for `per: ip`, a sliding-window counter for large
+   limits, `healthy_threshold` and interval jitter for health checks, a failure-rate breaker
+   threshold, and streaming bodies on routes without retry or transforms.
 
 ## How I used AI tools
 
-<!-- Fill in: e.g. used Claude Code to review the brief, compare languages, and scaffold the
-config/pipeline/test skeleton; then implemented features one at a time with tests. -->
+<!-- TODO(Matt): describe the earlier sessions (brief review, language choice, foundation,
+auth, rate limiting, writing docs/implementation-plan.md) in your own words. -->
+
+- **Plan first, then one feature at a time.** `docs/implementation-plan.md` fixed the order,
+  the pipeline placement and the "done when" test for each phase, so each feature could be
+  built and reviewed against a spec rather than improvised.
+- **Retry** was implemented with Claude Code against that spec, with unit tests on an injected
+  fake clock and end-to-end tests against the in-process mock upstream.
+- **Circuit breaker, load balancing and health checks were built in parallel** by three
+  Claude Code subagents, each in its own git worktree and branch. Load balancing and health
+  checks depend on each other, so the contract between them (a `TargetHealth` interface with
+  `isHealthy(target)`) was fixed up front in both briefs, and connecting the two was left to
+  the merge. Each agent ran the suite and typecheck and committed; nothing was merged by an
+  agent.
+- **Review and integration happened in the main session, not in the agents**: each branch's
+  code was read before merging, the documentation conflicts were resolved by hand, and the
+  wiring commit adds an end-to-end test that traffic actually avoids an unhealthy target.
+- **What went wrong**: the agents' worktrees were created from an old commit rather than
+  `main`; each agent noticed missing files and rebased onto `main` before starting. And
+  vitest also collected the agents' worktree copies of the test suite under
+  `.claude/worktrees/`, inflating the count until they were excluded. Lesson: verify the base of any generated branch before trusting
+  its diff.
