@@ -1,5 +1,6 @@
 import type { Feature } from '../pipeline/types.js';
 import { auth } from './auth.js';
+import { rateLimitFeature } from './rate-limit.js';
 
 /**
  * Registered features, outermost first: each wraps everything after it. Planned order:
@@ -10,4 +11,4 @@ import { auth } from './auth.js';
  *
  * Adding a feature = one module exporting a Feature + one line here.
  */
-export const FEATURES: readonly Feature[] = [auth];
+export const FEATURES: readonly Feature[] = [auth, rateLimitFeature];

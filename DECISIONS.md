@@ -79,7 +79,12 @@ sleeping.
   requests finish (responding with `Connection: close`), and force-closes anything still open
   after 10s.
 - **Rate limit inheritance**: a route's `rate_limit` *replaces* the global one rather than
-  stacking with it.
+  stacking with it. `global_rate_limit` is a *default applied per route*: each route has its own
+  buckets, not one counter shared across the gateway. Unmatched paths (404/405) and `/health` are
+  not counted.
+- **Rate limit responses**: 429 `{ "error": "too_many_requests", "retry_after": <s> }` with
+  `Retry-After`, the same code auth's failed-attempt limiter uses. Every response from a limited
+  route that got past auth carries `X-RateLimit-Limit` and `X-RateLimit-Remaining`.
 - **Auth (`api_key`)**:
   - A missing key and a wrong key both get 401 `unauthorized` with the same body, so a client
     can't tell which it was. There's no 403: an API key identifies a caller but carries no
@@ -107,6 +112,26 @@ sleeping.
   failure. So `threshold` means failed client requests, not failed upstream attempts. Once the
   breaker is open, requests are rejected before retry runs, so an open breaker never triggers
   retry storms.
+
+## Rate limiting
+
+- **`fixed_window`**: one counter per key, windows aligned to the epoch. O(1) memory per key, but
+  a client can send up to 2× the limit across a window boundary (there's a test pinning this).
+- **`sliding_window`**: a sliding *log* of accepted-request timestamps. It's exact, with no
+  boundary bursts. Memory is O(`requests`) per key, which is fine for the limits a gateway config
+  expresses. For very large limits I'd switch to the sliding-window *counter* approximation
+  (current count + weighted previous-window count, O(1)). Rejected requests aren't logged, so a
+  client hammering a limit isn't locked out past the window.
+- **Concurrency**: check-and-consume is one synchronous call with no `await` between read and
+  write. Node runs JS on a single thread, so concurrent requests can't race past the limit. The
+  end-to-end test fires 50 concurrent requests at a limit of 10 and asserts exactly 10 succeed.
+  Running multiple gateway processes would need a shared store (e.g. Redis with an atomic Lua
+  script); the `RateLimiter` interface is the seam for that.
+- **Memory**: a per-route sweeper (interval = window, stopped on shutdown) drops buckets that can
+  no longer affect a decision, so memory tracks *active* clients rather than every IP ever seen.
+- **Known gap**: the request body is buffered before the pipeline runs, so a client that is over
+  its limit (or has no valid key) can still make the gateway read up to 10 MB. Fix: run auth and
+  the rate limit before reading the body.
 
 <!-- Still to decide as features land:
   - retry `attempts`: total attempts or retries after the first? Retry non-idempotent POST?
