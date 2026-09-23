@@ -41,7 +41,9 @@ npm run typecheck
 
 | Path | Behaviour |
 |---|---|
-| `…/healthz` | `200 {"status":"ok"}` |
+| `…/healthz` | `200 {"status":"ok"}`, or `503 {"status":"failing"}` while failing |
+| `POST …/healthz/fail` | makes that server's `/healthz` fail until recovered |
+| `POST …/healthz/recover` | makes `/healthz` answer 200 again |
 | `…/slow?ms=N` | waits N ms (default 2000), then echoes |
 | `…/status/NNN` | responds with status NNN |
 | `…/flaky?fail=N` | first N hits return 503, later hits echo |
@@ -60,7 +62,7 @@ npm run typecheck
 - [x] `retry` (`fixed`, `exponential` with jitter), retrying listed statuses plus timeouts/connection failures; stops when the client hangs up
 - [ ] `circuit_breaker`
 - [ ] `upstream.targets` load balancing (`round_robin`, `weighted_round_robin`); currently uses the first target
-- [ ] `health_check`
+- [x] `health_check`: concurrent `GET` probes every `interval`; `unhealthy_threshold` consecutive failures (non-2xx, error or timeout) mark a target unhealthy, one success restores it
 - [ ] `request_transform` / `response_transform` (headers)
 - [ ] `request_transform.body.mapping` / `response_transform.body.envelope`
 
@@ -75,7 +77,7 @@ src/
   pipeline/           middleware types, composition, per-route pipeline builder
   features/           one module per config feature, registered in features/index.ts
   proxy/transport.ts  outbound request to one upstream target
-  upstream/           target selection (load balancing)
+  upstream/           target selection (load balancing), active health checks
 mock/                 mock upstream server
 test/                 vitest suite
 ```
