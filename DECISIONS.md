@@ -279,7 +279,8 @@ sleeping.
 ## Not implemented
 
 - **`request_transform` / `response_transform`**: parsed and validated at startup, but ignored
-  at runtime, so a route that configures them is proxied untransformed. That matters most for
+  at runtime, so a route that configures them is proxied untransformed. The gateway logs a
+  startup warning for each such route so the gap isn't silent. That matters most for
   `headers.remove`: on the example `/api/legacy` route, `X-Internal` still reaches the upstream
   and `Server` still reaches the client. The design is in `docs/implementation-plan.md`
   (phases 6–7): headers first (remove, then add), then JSON body mapping and the response
@@ -289,8 +290,7 @@ sleeping.
 
 In priority order:
 
-1. **Header transforms**, then body transforms (above). Until then, a startup warning when a
-   route configures a transform, so the gap isn't silent.
+1. **Header transforms**, then body transforms (above).
 2. **A per-request deadline** shared by retries and backoff, plus a cap on exponential delay.
    Today `/api/orders` can take ~18s to answer with a 5s route timeout.
 3. **Safer retries**: retry POST only with an `Idempotency-Key`, honor an upstream
@@ -331,5 +331,5 @@ auth, rate limiting, writing docs/implementation-plan.md) in your own words. -->
 - **What went wrong**: the agents' worktrees were created from an old commit rather than
   `main`; each agent noticed missing files and rebased onto `main` before starting. And
   vitest also collected the agents' worktree copies of the test suite under
-  `.claude/worktrees/`, inflating the count until they were excluded. Lesson: verify the base of any generated branch before trusting
+  `.claude/worktrees/`, inflating the count until the worktrees were removed. Lesson: verify the base of any generated branch before trusting
   its diff.

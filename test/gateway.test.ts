@@ -257,3 +257,28 @@ routes:
     }
   });
 });
+
+describe('unimplemented features', () => {
+  it('warns at startup when a route configures transforms, which are not applied yet', async () => {
+    const { logger, entries } = recordingLogger();
+    const gateway = await startGateway(
+      `
+gateway: {}
+routes:
+  - path: /legacy
+    methods: [GET]
+    upstream: { url: "http://127.0.0.1:1" }
+    request_transform: { headers: { remove: [X-Internal] } }
+  - path: /plain
+    methods: [GET]
+    upstream: { url: "http://127.0.0.1:1" }
+`,
+      logger,
+    );
+    await gateway.close();
+    const warnings = entries.filter((e) => e.level === 'warn' && e.msg.startsWith('transforms'));
+    expect(warnings).toEqual([
+      expect.objectContaining({ fields: { route: '/legacy', transforms: ['request_transform'] } }),
+    ]);
+  });
+});
