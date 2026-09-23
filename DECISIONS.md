@@ -311,25 +311,36 @@ In priority order:
 
 ## How I used AI tools
 
-<!-- TODO(Matt): describe the earlier sessions (brief review, language choice, foundation,
-auth, rate limiting, writing docs/implementation-plan.md) in your own words. -->
+I used Claude Code for the whole project. Most of the code, the reviews and the plan were
+written by AI; my part was choosing between options, setting the order, and checking results.
 
-- **Plan first, then one feature at a time.** `docs/implementation-plan.md` fixed the order,
-  the pipeline placement and the "done when" test for each phase, so each feature could be
-  built and reviewed against a spec rather than improvised.
-- **Retry** was implemented with Claude Code against that spec, with unit tests on an injected
-  fake clock and end-to-end tests against the in-process mock upstream.
-- **Circuit breaker, load balancing and health checks were built in parallel** by three
-  Claude Code subagents, each in its own git worktree and branch. Load balancing and health
-  checks depend on each other, so the contract between them (a `TargetHealth` interface with
-  `isHealthy(target)`) was fixed up front in both briefs, and connecting the two was left to
-  the merge. Each agent ran the suite and typecheck and committed; nothing was merged by an
-  agent.
-- **Review and integration happened in the main session, not in the agents**: each branch's
-  code was read before merging, the documentation conflicts were resolved by hand, and the
-  wiring commit adds an end-to-end test that traffic actually avoids an unhealthy target.
-- **What went wrong**: the agents' worktrees were created from an old commit rather than
-  `main`; each agent noticed missing files and rebased onto `main` before starting. And
-  vitest also collected the agents' worktree copies of the test suite under
-  `.claude/worktrees/`, inflating the count until the worktrees were removed. Lesson: verify the base of any generated branch before trusting
-  its diff.
+- **Reading the brief**: Claude read the requirements PDF and summarized it for me.
+- **Language**: I had narrowed it to Go, TypeScript and PHP and asked Claude to compare them for
+  this brief. I went with TypeScript: it was a good technical fit for the requirements, and I
+  was more familiar with it than with Go.
+- **Foundation**: Claude wrote it: config loading and validation, routing, the proxy
+  transport, the `Feature` middleware pipeline and the mock upstream (the three 12:26 commits).
+- **Review rounds were AI too**: a review of the foundation produced the hardening in
+  "Harden request handling and add API-key auth" (path normalization, encoded separators, body
+  limits, client aborts, shutdown), and a review of rate limiting produced both follow-up
+  commits (keeping rate limit headers on errors from further in, and lazy bucket sweeping).
+- **Plan**: Claude drafted `docs/implementation-plan.md`, which set the feature order, where
+  each feature sits in the pipeline, and a "done when" test for each phase. Each feature after
+  it was built against that plan.
+- **Parallel agents**: the circuit breaker, load balancing and health checks were built at the
+  same time by three Claude Code subagents, each in its own git worktree and branch. Load
+  balancing and health checks depend on each other, so the interface between them
+  (`TargetHealth.isHealthy(target)`) was fixed in both briefs up front, and connecting the two
+  was left to the merge. The main session reviewed each branch, merged it, resolved the doc
+  conflicts and wrote the wiring commit, with an end-to-end test that traffic avoids an
+  unhealthy target.
+- **How I checked the work**: I read some diffs, but I relied mostly on the test suite, and
+  that's why every phase had to land with its own tests (unit tests on a fake clock plus
+  end-to-end tests against the mock upstream). I also tried some behaviour by hand against the
+  mock. I think that's the honest weak spot: the review was also AI, so code the tests don't
+  exercise has had an AI reviewer but no human one.
+- **What went wrong**: the agents' worktrees were created from an old commit instead of
+  `main`. Each agent noticed the missing files and moved its branch onto `main` before
+  starting, but it's a reminder to check the base of any generated branch before trusting its
+  diff. Vitest also picked up the worktrees' copies of the test suite, inflating the count
+  until the worktrees were removed.
