@@ -279,4 +279,44 @@ routes:
     await setHealthz(a.url, 'recover');
     expect(health()).toHaveLength(2);
   });
+
+  it('routes around a target the monitor has marked unhealthy, and back once it recovers', async () => {
+    const { logger, entries } = recordingLogger();
+    const gateway = await startGateway(
+      `
+gateway: {}
+routes:
+  - path: "/products"
+    methods: ["GET"]
+    upstream:
+      targets:
+        - url: "${a.url}"
+        - url: "${b.url}"
+      balance: round_robin
+    health_check:
+      path: "/healthz"
+      interval: "20ms"
+      unhealthy_threshold: 2
+`,
+      logger,
+    );
+    const servedBy = async (n: number) => {
+      const names = [];
+      for (let i = 0; i < n; i++) names.push((await fetch(`${gateway.url}/products`)).headers.get('x-upstream'));
+      return names;
+    };
+    const transitions = () => entries.filter((entry) => entry.msg.startsWith('upstream target')).length;
+    try {
+      await setHealthz(a.url, 'fail');
+      await vi.waitFor(() => expect(transitions()).toBe(1));
+      expect(await servedBy(4)).toEqual(['b', 'b', 'b', 'b']);
+
+      await setHealthz(a.url, 'recover');
+      await vi.waitFor(() => expect(transitions()).toBe(2));
+      expect((await servedBy(4)).sort()).toEqual(['a', 'a', 'b', 'b']);
+    } finally {
+      await setHealthz(a.url, 'recover');
+      await gateway.close();
+    }
+  });
 });
