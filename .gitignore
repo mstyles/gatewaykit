@@ -1,0 +1,5 @@
+node_modules/
+dist/
+coverage/
+# Take-home brief — not part of the submission
+*.pdf
